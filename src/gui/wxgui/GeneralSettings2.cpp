@@ -17,6 +17,14 @@
 
 #include "config/CemuConfig.h"
 #include "config/NetworkSettings.h"
+#include "Cafe/OS/libs/nsyshid/Whitelist.h"
+#ifdef HAS_LIBUSB
+#if BOOST_OS_BSD
+#include <libusb.h>
+#else
+#include <libusb-1.0/libusb.h>
+#endif
+#endif
 
 #include "audio/IAudioAPI.h"
 #if BOOST_OS_WINDOWS
@@ -1071,6 +1079,164 @@ wxPanel* GeneralSettings2::AddDebugPage(wxNotebook* notebook)
 	return panel;
 }
 
+wxPanel* GeneralSettings2::AddUSBPage(wxNotebook* notebook)
+{
+	auto* panel = new wxPanel(notebook, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
+	auto* panel_sizer = new wxBoxSizer(wxVERTICAL);
+
+	{
+		auto* box = new wxStaticBox(panel, wxID_ANY, _("USB Passthrough Whitelist"));
+		auto* box_sizer = new wxStaticBoxSizer(box, wxVERTICAL);
+
+		box_sizer->Add(new wxStaticText(box, wxID_ANY,
+			_("Physical USB HID devices listed here are passed through to the emulated system via libusb.\n"
+			  "On Windows you must first replace the device driver with WinUSB using Zadig (zadig.akeo.ie).")),
+			0, wxALL, 5);
+
+		m_usb_whitelist = new wxListBox(box, wxID_ANY, wxDefaultPosition, wxSize(-1, 150), 0, nullptr, wxLB_SINGLE);
+		m_usb_whitelist->SetToolTip(_("User-defined USB HID passthrough devices (VID:PID)"));
+		box_sizer->Add(m_usb_whitelist, 1, wxALL | wxEXPAND, 5);
+
+		auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
+		auto* btn_add = new wxButton(box, wxID_ANY, _("Add"));
+		auto* btn_remove = new wxButton(box, wxID_ANY, _("Remove"));
+		btn_add->Bind(wxEVT_BUTTON, &GeneralSettings2::OnUSBAddDevice, this);
+		btn_remove->Bind(wxEVT_BUTTON, &GeneralSettings2::OnUSBRemoveDevice, this);
+		btn_sizer->Add(btn_add, 0, wxRIGHT, 5);
+		btn_sizer->Add(btn_remove, 0);
+		box_sizer->Add(btn_sizer, 0, wxALL, 5);
+
+		panel_sizer->Add(box_sizer, 1, wxALL | wxEXPAND, 5);
+	}
+
+	panel->SetSizerAndFit(panel_sizer);
+	return panel;
+}
+
+void GeneralSettings2::OnUSBAddDevice(wxCommandEvent& event)
+{
+#ifdef HAS_LIBUSB
+	struct USBEntry
+	{
+		uint16_t vid, pid;
+		wxString label;
+	};
+	std::vector<USBEntry> entries;
+
+	libusb_context* ctx = nullptr;
+	if (libusb_init(&ctx) == 0)
+	{
+		libusb_device** devs = nullptr;
+		ssize_t cnt = libusb_get_device_list(ctx, &devs);
+		for (ssize_t i = 0; i < cnt; ++i)
+		{
+			libusb_device_descriptor desc{};
+			if (libusb_get_device_descriptor(devs[i], &desc) != 0)
+				continue;
+			if (desc.bDeviceClass == LIBUSB_CLASS_HUB)
+				continue;
+
+			wxString name;
+			libusb_device_handle* handle = nullptr;
+			if (libusb_open(devs[i], &handle) == 0)
+			{
+				unsigned char buf[256]{};
+				if (desc.iProduct > 0 &&
+					libusb_get_string_descriptor_ascii(handle, desc.iProduct, buf, sizeof(buf)) > 0)
+					name = wxString::FromUTF8(reinterpret_cast<char*>(buf)).Trim();
+				if (name.empty() && desc.iManufacturer > 0 &&
+					libusb_get_string_descriptor_ascii(handle, desc.iManufacturer, buf, sizeof(buf)) > 0)
+					name = wxString::FromUTF8(reinterpret_cast<char*>(buf)).Trim();
+				libusb_close(handle);
+			}
+			if (name.empty())
+				name = _("Unknown Device");
+
+			entries.push_back({desc.idVendor, desc.idProduct,
+				wxString::Format("%04X:%04X  %s", desc.idVendor, desc.idProduct, name)});
+		}
+		if (devs)
+			libusb_free_device_list(devs, 1);
+		libusb_exit(ctx);
+	}
+
+	if (!entries.empty())
+	{
+		wxArrayString choices;
+		for (const auto& e : entries)
+			choices.Add(e.label);
+
+		wxSingleChoiceDialog pick(this,
+			_("Select a connected USB device to add to the passthrough whitelist:"),
+			_("Add USB Device"), choices);
+		if (pick.ShowModal() == wxID_OK)
+		{
+			const auto& e = entries[pick.GetSelection()];
+			wxString entry = wxString::Format("%04X:%04X", e.vid, e.pid);
+			if (m_usb_whitelist->FindString(entry) == wxNOT_FOUND)
+				m_usb_whitelist->Append(entry);
+		}
+		return;
+	}
+	// Fall through to manual entry if no devices found or libusb unavailable
+#endif
+
+	// Manual entry fallback
+	auto* dlg = new wxDialog(this, wxID_ANY, _("Add USB Device"), wxDefaultPosition, wxDefaultSize,
+		wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER);
+	auto* sizer = new wxBoxSizer(wxVERTICAL);
+	auto* grid = new wxFlexGridSizer(2, 2, 5, 10);
+	grid->AddGrowableCol(1);
+
+	grid->Add(new wxStaticText(dlg, wxID_ANY, _("Vendor ID (hex):")), 0, wxALIGN_CENTER_VERTICAL);
+	auto* vid_ctrl = new wxTextCtrl(dlg, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(80, -1));
+	vid_ctrl->SetMaxLength(6);
+	grid->Add(vid_ctrl, 0);
+
+	grid->Add(new wxStaticText(dlg, wxID_ANY, _("Product ID (hex):")), 0, wxALIGN_CENTER_VERTICAL);
+	auto* pid_ctrl = new wxTextCtrl(dlg, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(80, -1));
+	pid_ctrl->SetMaxLength(6);
+	grid->Add(pid_ctrl, 0);
+
+	sizer->Add(grid, 0, wxALL | wxEXPAND, 10);
+	sizer->Add(dlg->CreateButtonSizer(wxOK | wxCANCEL), 0, wxALL | wxEXPAND, 5);
+	dlg->SetSizerAndFit(sizer);
+
+	if (dlg->ShowModal() == wxID_OK)
+	{
+		wxString vid_str = vid_ctrl->GetValue().Trim();
+		wxString pid_str = pid_ctrl->GetValue().Trim();
+		if (vid_str.StartsWith("0x") || vid_str.StartsWith("0X"))
+			vid_str = vid_str.Mid(2);
+		if (pid_str.StartsWith("0x") || pid_str.StartsWith("0X"))
+			pid_str = pid_str.Mid(2);
+
+		unsigned long vid_val = 0, pid_val = 0;
+		bool valid = !vid_str.empty() && !pid_str.empty()
+			&& vid_str.ToULong(&vid_val, 16) && vid_val <= 0xFFFF
+			&& pid_str.ToULong(&pid_val, 16) && pid_val <= 0xFFFF;
+
+		if (valid)
+		{
+			wxString entry = wxString::Format("%04X:%04X", (unsigned)vid_val, (unsigned)pid_val);
+			if (m_usb_whitelist->FindString(entry) == wxNOT_FOUND)
+				m_usb_whitelist->Append(entry);
+		}
+		else
+		{
+			wxMessageBox(_("Invalid VID or PID. Please enter 1-4 hex digit values."), _("Error"), wxOK | wxICON_ERROR, this);
+		}
+	}
+	dlg->Destroy();
+}
+
+void GeneralSettings2::OnUSBRemoveDevice(wxCommandEvent& event)
+{
+	int sel = m_usb_whitelist->GetSelection();
+	if (sel != wxNOT_FOUND)
+		m_usb_whitelist->Delete(sel);
+}
+
 GeneralSettings2::GeneralSettings2(wxWindow* parent, bool game_launched)
 	: wxDialog(parent, wxID_ANY, _("General settings"), wxDefaultPosition, wxDefaultSize, wxCLOSE_BOX | wxCLIP_CHILDREN | wxCAPTION | wxRESIZE_BORDER), m_game_launched(game_launched)
 {
@@ -1085,6 +1251,7 @@ GeneralSettings2::GeneralSettings2(wxWindow* parent, bool game_launched)
 	notebook->AddPage(AddOverlayPage(notebook), _("Overlay"));
 	notebook->AddPage(AddAccountPage(notebook), _("Account"));
 	notebook->AddPage(AddDebugPage(notebook), _("Debug"));
+	notebook->AddPage(AddUSBPage(notebook), _("USB"));
 
 	Bind(wxEVT_CLOSE_WINDOW, &GeneralSettings2::OnClose, this);
 
@@ -1299,6 +1466,22 @@ void GeneralSettings2::StoreConfig()
 	config.gpu_capture_dir = m_gpu_capture_dir->GetValue().utf8_string();
 	config.framebuffer_fetch = m_framebuffer_fetch->IsChecked();
 #endif
+
+	// USB passthrough whitelist
+	{
+		std::vector<std::pair<uint16, uint16>> userDevices;
+		for (unsigned i = 0; i < m_usb_whitelist->GetCount(); ++i)
+		{
+			wxString entry = m_usb_whitelist->GetString(i);
+			unsigned long vid_val = 0, pid_val = 0;
+			wxString vid_str = entry.BeforeFirst(':');
+			wxString pid_str = entry.AfterFirst(':');
+			if (vid_str.ToULong(&vid_val, 16) && pid_str.ToULong(&pid_val, 16))
+				userDevices.emplace_back((uint16)vid_val, (uint16)pid_val);
+		}
+		config.emulated_usb_devices.usb_passthrough_whitelist = userDevices;
+		nsyshid::Whitelist::GetInstance().SetUserDevices(userDevices);
+	}
 
 	GetConfigHandle().Save();
 }
@@ -2084,6 +2267,11 @@ void GeneralSettings2::ApplyConfig()
 	m_gpu_capture_dir->SetValue(wxString::FromUTF8(config.gpu_capture_dir.GetValue()));
 	m_framebuffer_fetch->SetValue(config.framebuffer_fetch);
 #endif
+
+	// USB passthrough whitelist
+	m_usb_whitelist->Clear();
+	for (const auto& [vid, pid] : config.emulated_usb_devices.usb_passthrough_whitelist)
+		m_usb_whitelist->Append(wxString::Format("%04X:%04X", (unsigned)vid, (unsigned)pid));
 }
 
 void GeneralSettings2::OnAudioAPISelected(wxCommandEvent& event)

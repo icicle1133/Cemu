@@ -4,6 +4,7 @@
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
 #include "Backend.h"
 #include "Whitelist.h"
+#include "config/CemuConfig.h"
 
 
 namespace nsyshid
@@ -993,8 +994,8 @@ namespace nsyshid
 		{
 			if (reason == coreinit::RplEntryReason::Loaded)
 			{
-				// initialise whitelist
-				Whitelist::GetInstance();
+				// initialise whitelist and sync user-configured devices from config
+				Whitelist::GetInstance().SetUserDevices(GetConfig().emulated_usb_devices.usb_passthrough_whitelist);
 				AttachDefaultBackends();
 			}
 			else if (reason == coreinit::RplEntryReason::Unloaded)

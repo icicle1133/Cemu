@@ -93,6 +93,12 @@ if(MSVC AND MSVC_VERSION EQUAL 1940)
 	set_target_properties(CemuBin PROPERTIES LINK_FLAGS "/INCREMENTAL:NO")
 endif()
 
+if(MSVC AND MSVC_VERSION GREATER_EQUAL 1941)
+	# workaround: VS 2022 17.11+ removed __std_find_first_not_of_trivial_pos_* from libcpmt.lib
+	# but the compiler still emits calls to them; provide the implementations directly
+	target_sources(CemuBin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/util/msvc_stl_compat.cpp")
+endif()
+
 if(WIN32)
 	target_sources(CemuBin PRIVATE
 	resource/cemu.rc

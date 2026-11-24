@@ -46,6 +46,7 @@ private:
 	wxPanel* AddOverlayPage(wxNotebook* notebook);
 	wxPanel* AddAccountPage(wxNotebook* notebook);
 	wxPanel* AddDebugPage(wxNotebook* notebook);
+	wxPanel* AddUSBPage(wxNotebook* notebook);
 
 	// General
 	wxChoice * m_language;
@@ -105,6 +106,11 @@ private:
 	wxTextCtrl* m_gpu_capture_dir;
 	wxCheckBox* m_framebuffer_fetch;
 #endif
+
+	// USB
+	wxListBox* m_usb_whitelist;
+	void OnUSBAddDevice(wxCommandEvent& event);
+	void OnUSBRemoveDevice(wxCommandEvent& event);
 
 	void OnAccountCreate(wxCommandEvent& event);
 	void OnAccountDelete(wxCommandEvent& event);

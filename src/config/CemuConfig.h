@@ -534,6 +534,7 @@ struct CemuConfig
 		ConfigValue<bool> emulate_skylander_portal{false};
 		ConfigValue<bool> emulate_infinity_base{false};
 		ConfigValue<bool> emulate_dimensions_toypad{false};
+		std::vector<std::pair<uint16, uint16>> usb_passthrough_whitelist;
 	}emulated_usb_devices{};
 
 	static int AudioChannelsToNChannels(AudioChannels kStereo)

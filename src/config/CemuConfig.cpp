@@ -289,6 +289,15 @@ XMLConfigParser CemuConfig::Load(XMLConfigParser& parser)
 	emulated_usb_devices.emulate_skylander_portal = usbdevices.get("EmulateSkylanderPortal", emulated_usb_devices.emulate_skylander_portal);
 	emulated_usb_devices.emulate_infinity_base = usbdevices.get("EmulateInfinityBase", emulated_usb_devices.emulate_infinity_base);
 	emulated_usb_devices.emulate_dimensions_toypad = usbdevices.get("EmulateDimensionsToypad", emulated_usb_devices.emulate_dimensions_toypad);
+	emulated_usb_devices.usb_passthrough_whitelist.clear();
+	auto usbPassthrough = usbdevices.get("USBPassthrough");
+	for (auto entry = usbPassthrough.get("Device"); entry.valid(); entry = usbPassthrough.get("Device", entry))
+	{
+		uint32 vid = entry.get_attribute<uint32>("vid", 0);
+		uint32 pid = entry.get_attribute<uint32>("pid", 0);
+		if ((vid != 0 || pid != 0) && vid <= 0xFFFF && pid <= 0xFFFF)
+			emulated_usb_devices.usb_passthrough_whitelist.emplace_back((uint16)vid, (uint16)pid);
+	}
 
 	return parser;
 }
@@ -454,6 +463,13 @@ XMLConfigParser CemuConfig::Save(XMLConfigParser& parser)
 	usbdevices.set("EmulateSkylanderPortal", emulated_usb_devices.emulate_skylander_portal.GetValue());
 	usbdevices.set("EmulateInfinityBase", emulated_usb_devices.emulate_infinity_base.GetValue());
 	usbdevices.set("EmulateDimensionsToypad", emulated_usb_devices.emulate_dimensions_toypad.GetValue());
+	auto usbPassthrough = usbdevices.set("USBPassthrough");
+	for (const auto& [vid, pid] : emulated_usb_devices.usb_passthrough_whitelist)
+	{
+		auto entry = usbPassthrough.set("Device");
+		entry.set_attribute("vid", vid);
+		entry.set_attribute("pid", pid);
+	}
 
 	return config;
 }
